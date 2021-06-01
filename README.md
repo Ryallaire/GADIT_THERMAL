@@ -1,27 +1,36 @@
-# GADIT
-GPU Alternating Direction Implicit Thin film solver
+# GADIT THERMAL
+GPU Alternating Direction Implicit Thin film solver and Heat Solver
 
-## About
-GADIT is a GPU implementation of the numerical scheme for the generalize thin film model presented by Witelski and Bowen (2003) (doi).  Comparisons to a similarly coded serial CPU method show that GADIT performs 10-30 times faster, allowing domains containing several millions of points to be solved within a week. The performance results of GADIT are currently in preparation for publication.
+## About 
+This code solves 3 pdes (i) thin-film equation, (ii) heat equation for the film, and (iii) heat equation for the substrate. All of (i), (ii) and (iii) are from https://arxiv.org/abs/2009.06536 (see model (A)). 
 
 ## Operating System Support
-GADIT was developed and tested on the Windows platform.
+This version of GADIT Heat was developed and tested on the Ubuntu 18.04 platform and CUDA 10.2.89 and GCC 7.5.0. It has been adapted to work with HPC clusters (i) Stheno (NJIT) and (ii) Summit (ORNL). See below for compiling specifics.
 
-Durning early development, GADIT has successfully complied on Ubuntu 14.05; however, there were file I/0 errors. Brief testing showed that by removing the file I/0,  GADIT  ran without issue and produced the correct results (console output).  Since then, the file I/0 has been redesigned; however, due to a technical failure, my Ubuntu 14.05 boot failed, and I have been unable to get NVIDIA driver to work again; therefore, I have been unable to test the new file I/0. The code should work on Linux base operating systems, and if there are any runtime errors, this is most likely due to the file I/0; This can be corrected by modifying output.h. In addition, the original makefile was lost.
+## Compiling
+Locally: command: 
+	nvcc -lstdc++fs main.cu cuPentBatch.cu -lcusparse -lcublas |& grep error
 
-GADIT has not been tested on Macintosh based operating systems.
+Stheno: 
+	module load cuda 
+Summit:
+	module load cuda/10.1.243
+	module load gcc/6.4.0
+	nvcc -lstdc++fs main.cu cuPentBatch.cu -lcusparse -lcublas |& grep error
 
-## Known Issues
-
-There is a small bug in the adaptive time stepping method, timestep_manager.h.  GADIT outputs the solution at user specified time steps, 'dt_out,' and will adjust the current time step, 'dt,'  to
-calculate the solution at the output time, 't_out,' if 'dt' advances the solution past 't_out.'  GADIT will also increase 'dt' if a certain amount of
-time steps are computed within the convergence conditions of the Newton iterations method, 'stable_time_steps.'  There is, however, a bug where both conditions are met, which results in the time step being increased instead; this is an unexpected state; therefore GADIT will terminate.  This issue appears only to occur if 'stable_time_steps' is small, and setting 'stable_time_steps' to a large value e.g. 500 removes this issue. Large values for 'stable_time_steps' should be preferred in any case, as for numerical efficiency as with small 'stable_time_steps,' it is more likely that time is wasted on computations that are not used. 
- 
 ## Minimal Setup
 
-To implement GADIT, it is instructive to read the main.cu file for a minimal example of how to initialize and execute GADIT. To implement your own thin film model, you may follow the instructions in the model_default.h file and edit appropriately.  Note that the main.cu file should also be modified to match the new parameters.
+To implement GADIT, it is instructive to read the main.cu file for a minimal example of how to initialize and execute GADIT. To implement your own thin film model, you may follow the instructions in the model_default.h file and edit appropriately.  Note that the main.cu file should also be modified to match the new parameters. Some parameters are in defined in paramaters.h. To use the code in linux, many c++ structures needed to be placed into this file (linux didn't like templating very much). 
 
-GADIT also backs up the solution at a user specified time interval; therefore,  simulations may be stopped and started without any significant loss.
+GADIT also backs up the solution at a user specified time interval; therefore,  simulations may be stopped and started without any significant loss. Note that this backup includes the following
+(i) BackupSolutionData.bin
+	This is the film thickness h(x,y,t) at backup time (default is every 5 minutes).
+(ii) BackupFilmTemp.bin
+	This is the film temperature T_f(x,y,t) at backup time.
+(iii) BackupSubTemp.bin
+	This is the substrate temperature T_s(x,y,z,t) at backup time. Note that this file should be the largest (n x m x p).
+(iv) Backupinfo.bin
+	This file contains all the timestep information necessary to continue a simulation.
 
 ### Input 
 The only possible external input to GADIT is initial condition data. The data must be in binary 64-bit float format and place in input/InitialCondition.bin
@@ -56,24 +65,42 @@ Binary 64-bit integer data containing the timestep indices for records in GADITs
 The sub-folder 'temp' contains a backup of solutions. There are two files, BackupSolutionData.bin, the solution data; and BackupSolutionData.bin, a copy of the timestep_manager object.
 
 
+### Simulation Specific Information
+Here you can include information specific to this simulation for record keeping.
+Domain:
+- Thick Substrate Simulation, Hs=10 (100nm), Nzs=p=15.
+- Large domain: n=m=181*8
 
-## Advanced Features
+Intiial Condition:
+- Read from file (created in matlab)
 
-Below is a list of GADIT advanced features.
+Timestepping:
+- dt_init = 0.000001*paras.temporal.dt_out
+- dt_out = 10.0
+- t_end = 60*paras.temporal.dt_out (end at 600)
+	--made 600 even though 500 should be plenty. Films dewet near 400, but this allows us to run the simulations longer if need be.
 
-### Saving Models for Later Use
-Instead of altering the default model, you may create a custom entry for your model that may be selected in GADIT by the model ID parameter. 
+Dimensionless Parameters:
+- CC = 1.0
+- cK = 14.20277
+- cD = 0.0
+- Bi = 0.1
 
-1) Add entry to enum 'id' in namespace 'model' located in solver_template.h file.
+Material Parameters:
+- tp = 18e-9		(pulse width)
+- energy_0 = 1.4e3 	(laser fluence)
 
-2) Copy model_default.h file and name appropriately. 
+Switches:
+- constant parameters = true		(constant material parameters)
+- time_varying_surf_tens = false	(time varying surface tension)
+- time_varying_visc = false		(time varying viscosity)
+- spat_varying_visc = false		(spatially varying viscosity)
+- nonlin_sub_heat = true		(Use Newton's method for TC varying; may want to turn this off for the simple case k=1)
+- nonlin_grid = true			(nonuniform z-grid in substrate)
+- sub_in_plane_diff = false 		(drop Txx and Tyy in substrate heat solver)
+- TC_model = 1 (k=1)
 
-3) Rename 'MODEL_DEFAULT' compiler directive.
 
-4) Rename namespace 'model_default' appropriately.
 
-5) Update 'const model::id ID' to match value created in 1).
 
-6) Change parameters and non-linear function definitions as needed.
 
-7)  Add new switch statement to model_list.h file.
